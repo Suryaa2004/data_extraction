@@ -4,6 +4,9 @@ from flask import Flask, request, jsonify, render_template
 from werkzeug.utils import secure_filename
 from pypdf import PdfReader
 import requests
+from flask_cors import CORS  # Import CORS
+import json
+import re
 
 # Load environment variables
 dotenv.load_dotenv()
@@ -11,6 +14,8 @@ OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')
 
 # Initialize Flask app
 app = Flask(__name__)
+CORS(app)  # Enable CORS for all routes
+
 app.config['UPLOAD_FOLDER'] = 'uploads'
 
 # Home page
@@ -66,7 +71,7 @@ def extract_data_with_gpt(text):
         "messages": [
             {
                 "role": "user",
-                "content": f"Extract key fields and values from this document: {text}"
+                "content": f"Extract structured key-value pairs from this invoice and return only valid JSON output. Do not include markdown formatting or explanations:\n\n{text}"
             }
         ]
     }
@@ -75,8 +80,23 @@ def extract_data_with_gpt(text):
         response = requests.post(url, headers=headers, json=data)
         response.raise_for_status()
         response_data = response.json()
-        return response_data['choices'][0]['message']['content']
-    except Exception as e:
+
+        # Debugging: Print API response
+        print("GPT API Raw Response:", response_data)
+
+        # Extract the content field
+        extracted_text = response_data['choices'][0]['message']['content']
+
+        # Remove Markdown-style code block markers (```json ... ```)
+        extracted_text = re.sub(r"```json\n(.*?)\n```", r"\1", extracted_text, flags=re.DOTALL).strip()
+
+        # Try parsing the cleaned response as JSON
+        return json.loads(extracted_text)
+
+    except json.JSONDecodeError as json_err:
+        print("Invalid JSON received:", extracted_text)
+        return {'error': 'Invalid JSON format from GPT API'}
+    except requests.exceptions.RequestException as e:
         print(f"Error fetching data from GPT API: {e}")
         return {'error': 'Failed to fetch data from GPT API'}
 
